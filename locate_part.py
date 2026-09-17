@@ -29,6 +29,20 @@ def locate_part(
     # -----------------------------
     gray = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
     cv2.imshow("gray", gray)
+
+    # 1. 逆向二值化：背景是白色(255)，前景主體會變成白色(255)，背景變黑色(0)
+    # 只要像素 < 250 (非純白) 都算主體
+    _, thresh = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY_INV)
+
+    # 2. 形態學閉運算：將毛髮、竹子等微小縫隙連成一個整體
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    cv2.imshow("Binary Mask", closed)
+
+    # 3. 尋找主體外輪廓
+    contours, _ = cv2.findContours(
+        closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
     # -----------------------------
     # 高斯模糊
     # -----------------------------
