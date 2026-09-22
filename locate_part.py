@@ -5,209 +5,401 @@ import sys
 from pathlib import Path
 
 
-def locate_part(
-    input_path: Path,
-    output_path: Path
-):
-    output_path.parent.mkdir(parents=True,exist_ok=True)
+class PartLocator:
 
-    image = cv2.imread(str(input_path))
+    def __init__(
+        self,
+        padding=10,
+        min_area=1000,
+        max_area_ratio=0.8,
+        min_ratio=0.8,
+        max_ratio=2.5
+    ):
+
+        self.padding = padding
+        self.min_area = min_area
+        self.max_area_ratio = max_area_ratio
+        self.min_ratio = min_ratio
+        self.max_ratio = max_ratio
+
+        self.image = None
 
 
-    if image is None:raise ValueError("圖片讀取失敗")
-    cv2.imshow("Original", image)
     # -----------------------------
-    # 顯示圖片資訊
+    # 讀取圖片
     # -----------------------------
-    height, width, channel = image.shape
-    print(f"圖片高度：{height}")
-    print(f"圖片寬度：{width}")
-    print(f"圖片通道：{channel}")
-    image_area = height * width
-    # -----------------------------
-    # 灰階
-    # -----------------------------
-    gray = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
-    cv2.imshow("gray", gray)
+    def load_image(self, input_path: Path):
 
-    # 1. 逆向二值化：背景是白色(255)，前景主體會變成白色(255)，背景變黑色(0)
-    # 只要像素 < 250 (非純白) 都算主體
-    _, thresh = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY_INV)
-
-    # 2. 形態學閉運算：將毛髮、竹子等微小縫隙連成一個整體
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    cv2.imshow("Binary Mask", closed)
-
-    # 3. 尋找主體外輪廓
-    contours, _ = cv2.findContours(
-        closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-    # -----------------------------
-    # 高斯模糊
-    # -----------------------------
-    blurred = cv2.GaussianBlur(
-        gray,
-        (5,5),
-        0
-    )
-    cv2.imshow("blurred", blurred)
-    # -----------------------------
-    # Canny
-    # -----------------------------
-    edges = cv2.Canny(
-        blurred,
-        30,
-        100
-    )
-    cv2.imshow("edges", edges)
-    # -----------------------------
-    # 找輪廓
-    # -----------------------------
-    contours, _ = cv2.findContours(
-        edges,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-    if len(contours) == 0:
-        raise ValueError(
-            "沒有找到輪廓"
+        self.image = cv2.imread(
+            str(input_path)
         )
 
-    # -----------------------------
-    # 篩選輪廓
-    # -----------------------------
-    candidates = []
+        if self.image is None:
+            raise ValueError(
+                "圖片讀取失敗"
+            )
 
-    for contour in contours:
 
-        area = cv2.contourArea(contour)
+        height, width, channel = self.image.shape
 
-        # 面積太小
-        if area < 1000:
-            continue
+        print(f"圖片高度：{height}")
+        print(f"圖片寬度：{width}")
+        print(f"圖片通道：{channel}")
 
-        # 面積太大(超過圖片80%)
-        if area > image_area * 0.8:
-            continue
 
-        x, y, w, h = cv2.boundingRect(contour)
+        cv2.imshow(
+            "Original",
+            self.image
+        )
 
-        ratio = w / h
-
-        # 長寬比限制
-        if ratio < 0.8 or ratio > 2.5:
-            continue
-
-        candidates.append(contour)
-
-    if len(candidates) == 0:
-        raise ValueError("沒有符合條件的輪廓")
-    # -----------------------------
-    # 最大候選輪廓
-    # -----------------------------
-    largest_contour = max(
-        candidates,
-        key=cv2.contourArea
-    )
-    area = cv2.contourArea(largest_contour)
-
-    print(f"最大輪廓面積：{area}")
-    x, y, width, height = cv2.boundingRect(
-        largest_contour
-    )
-    # -----------------------------
-    # Padding
-    # -----------------------------
-    padding = 10
-
-    x = max(0, x - padding)
-    y = max(0, y - padding)
-
-    w = min(image.shape[1] - x, width + padding * 2)
-    h = min(image.shape[0] - y, height + padding * 2)
 
     # -----------------------------
-    # ROI 太小
+    # 前處理
     # -----------------------------
-    if w < 50 or h < 50:
-        raise ValueError("ROI 太小")
+    def preprocess(self):
+
+        gray = cv2.cvtColor(
+            self.image,
+            cv2.COLOR_BGR2GRAY
+        )
+
+
+        cv2.imshow(
+            "gray",
+            gray
+        )
+
+
+        blurred = cv2.GaussianBlur(
+            gray,
+            (5,5),
+            0
+        )
+
+
+        edges = cv2.Canny(
+            blurred,
+            30,
+            100
+        )
+
+
+        cv2.imshow(
+            "edges",
+            edges
+        )
+
+
+        return edges
+
+
 
     # -----------------------------
-    # ROI 太大
+    # 找候選輪廓
     # -----------------------------
-    if w > image.shape[1] * 0.9:
-        raise ValueError("ROI 寬度過大")
+    def find_candidates(
+        self,
+        edges
+    ):
 
-    if h > image.shape[0] * 0.9:
-        raise ValueError("ROI 高度過大")
+        contours, _ = cv2.findContours(
+            edges,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
+        )
+
+
+        if len(contours) == 0:
+
+            raise ValueError(
+                "沒有找到輪廓"
+            )
+
+
+        image_area = (
+            self.image.shape[0]
+            *
+            self.image.shape[1]
+        )
+
+
+        candidates = []
+
+
+        for contour in contours:
+
+
+            area = cv2.contourArea(
+                contour
+            )
+
+
+            # 面積太小
+            if area < self.min_area:
+                continue
+
+
+            # 面積太大
+            if area > image_area * self.max_area_ratio:
+                continue
+
+
+
+            x,y,w,h = cv2.boundingRect(
+                contour
+            )
+
+
+            ratio = w / h
+
+
+            if (
+                ratio < self.min_ratio
+                or
+                ratio > self.max_ratio
+            ):
+                continue
+
+
+            candidates.append(
+                contour
+            )
+
+
+        if not candidates:
+
+            raise ValueError(
+                "沒有符合條件的輪廓"
+            )
+
+
+        return candidates
+
+
 
     # -----------------------------
-    # 裁切 ROI
+    # 找最大輪廓
     # -----------------------------
-    roi = image[
-        y:y + h,
-        x:x + w
-    ]
+    def select_best_contour(
+        self,
+        candidates
+    ):
 
-    if roi.size == 0:
-        raise ValueError("ROI 為空")
 
-    cv2.imshow("ROI", roi)
+        contour = max(
+            candidates,
+            key=cv2.contourArea
+        )
+
+
+        area = cv2.contourArea(
+            contour
+        )
+
+
+        print(
+            f"最大輪廓面積:{area}"
+        )
+
+
+        return contour
+
+
+
     # -----------------------------
-    # 儲存 ROI
+    # ROI裁切
     # -----------------------------
+    def crop_roi(
+        self,
+        contour
+    ):
 
-    cv2.imwrite(
+
+        x,y,w,h = cv2.boundingRect(
+            contour
+        )
+
+
+        x = max(
+            0,
+            x-self.padding
+        )
+
+        y = max(
+            0,
+            y-self.padding
+        )
+
+
+        w = min(
+            self.image.shape[1]-x,
+            w+self.padding*2
+        )
+
+
+        h = min(
+            self.image.shape[0]-y,
+            h+self.padding*2
+        )
+
+
+
+        if w < 50 or h < 50:
+
+            raise ValueError(
+                "ROI太小"
+            )
+
+
+        if (
+            w > self.image.shape[1]*0.9
+            or
+            h > self.image.shape[0]*0.9
+        ):
+
+            raise ValueError(
+                "ROI太大"
+            )
+
+
+        roi = self.image[
+            y:y+h,
+            x:x+w
+        ]
+
+
+        if roi.size == 0:
+
+            raise ValueError(
+                "ROI為空"
+            )
+
+
+        cv2.imshow(
+            "ROI",
+            roi
+        )
+
+
+        return roi,x,y,w,h
+
+
+
+    # -----------------------------
+    # 儲存結果
+    # -----------------------------
+    def save_result(
+        self,
+        roi,
+        output_path
+    ):
+
+        output_path.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+
+        cv2.imwrite(
             str(output_path),
             roi
         )
+
+
+
     # -----------------------------
-    # 回傳 JSON
+    # 主流程
     # -----------------------------
-    result = {
-
-        "status": "success",
-
-        "output": str(output_path),
-
-        "x": x,
-
-        "y": y,
-
-        "width": width,
-
-        "height": height
-    }
+    def run(
+        self,
+        input_path,
+        output_path
+    ):
 
 
-    return result
+        self.load_image(
+            input_path
+        )
+
+
+        edges = self.preprocess()
+
+
+        candidates = self.find_candidates(
+            edges
+        )
+
+
+        contour = self.select_best_contour(
+            candidates
+        )
+
+
+        roi,x,y,w,h = self.crop_roi(
+            contour
+        )
+
+
+        self.save_result(
+            roi,
+            output_path
+        )
+
+
+        return {
+
+            "status":"success",
+
+            "output":str(output_path),
+
+            "x":x,
+
+            "y":y,
+
+            "width":w,
+
+            "height":h
+
+        }
+
+
 
 
 
 def main():
 
-    parser = argparse.ArgumentParser(
-        description="找出圖片中最大的輪廓並裁切 ROI"
-    )
+
+    parser = argparse.ArgumentParser()
+
 
     parser.add_argument(
         "--input",
-        required=True,
-        help="輸入圖片路徑"
+        required=True
     )
+
 
     parser.add_argument(
         "--output",
-        required=True,
-        help="ROI 輸出圖片路徑"
+        required=True
     )
 
+
     args = parser.parse_args()
+
+
+
+    locator = PartLocator()
+
+
+
     try:
-        result = locate_part(
+
+        result = locator.run(
+
             Path(args.input),
+
             Path(args.output)
+
         )
 
 
@@ -219,21 +411,38 @@ def main():
             )
         )
 
+
         cv2.waitKey(0)
         cv2.destroyAllWindows()
+
+
         return 0
+
+
+
     except Exception as e:
+
+
         print(
             json.dumps(
                 {
-                    "status": "error",
-                    "message": str(e)
+                    "status":"error",
+                    "message":str(e)
                 },
                 ensure_ascii=False,
                 indent=4
             )
         )
+
+
         cv2.destroyAllWindows()
+
         return 1
-if __name__ == "__main__":
-    sys.exit(main())
+
+
+
+if __name__=="__main__":
+
+    sys.exit(
+        main()
+    )
